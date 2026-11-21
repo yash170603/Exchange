@@ -1,3 +1,3 @@
-module github.com/yash170603/concurrentJob.git
+module github.com/yash170603/Exchange
 
 go 1.26.2
