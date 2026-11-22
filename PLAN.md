@@ -3,11 +3,49 @@
 **What:** a small stock exchange. Traders connect, send buy and sell orders, the exchange
 matches them fairly, broadcasts prices, saves trades, and survives crashes.
 
-**Why:** every piece of an exchange forces you to learn one real systems skill: concurrency,
-networking, timeouts, rate limiting, databases, crash recovery, performance, Rust, replication.
+**Why:** two goals, in this order:
+1. **Write idiomatic Go by hand.** Syntax, the standard library, and the habits of good Go code,
+   built into muscle memory by typing every line yourself.
+2. **Learn systems engineering.** Concurrency, networking, timeouts, rate limiting, databases,
+   crash recovery, performance, replication. Each module is one of these skills.
 
-**Budget:** ~1 hour a day, ~5 hours a week, 52 weeks. Week counts below are estimates.
-If a module takes longer, that's fine. **Keep the order, not the dates.**
+The exchange is just the excuse. **You don't have to invent the business logic.** Claude hands
+you the design of every function, including the rules it follows. Your job is to turn that
+design into clean, tested Go and to understand *why* it's built that way.
+
+**Budget:** ~1 hour a day, ~5 hours a week. Week counts are estimates. **Keep the order, not the dates.**
+
+---
+
+## How it works: function cards
+
+Every module is a list of **files**, and every file is a list of **functions**. For each
+function, Claude writes a **card** in `docs/hld/MX.md` before you start:
+
+```text
+### F3 · Submit                                   [ ] not started
+File:       orderbook/book.go
+Signature:  func (b *OrderBook) Submit(o *Order) ([]Trade, error)
+Does:       plain-English steps, including the business rules
+Go to use:  syntax and packages this function practises (e.g. slices.Insert, errors.Is)
+System idea: the engineering concept behind it (e.g. why seq beats timestamps)
+Tests:      the cases your test must cover
+Watch out:  common mistakes
+```
+
+The loop for each card:
+
+1. **Read the card.** Ask about anything unclear *before* typing.
+2. **Type it yourself.** No copy-paste, no AI autocomplete in the editor.
+3. **Write its test**, then `go test -race ./...` and `go vet ./...`.
+4. **Ask Claude to review.** Fix what comes back. Claude points at lines, it doesn't rewrite.
+5. **Commit** (one card = one commit) and Claude ticks the card here and in `docs/hld/MX.md`.
+
+Stuck? Claude climbs the hint ladder in `CLAUDE.md`: question → concept → steps → small snippet.
+
+At the end of each module: Claude quizzes you, and you write the short deliverable listed.
+
+Card status: `[ ]` not started · `[~]` written, needs review/fixes · `[x]` reviewed and committed
 
 ---
 
@@ -36,7 +74,7 @@ If a module takes longer, that's fine. **Keep the order, not the dates.**
                         └────────┬────────┘
                                  ▼
                         ┌─────────────────┐
-                        │ Post-trade pool │ M3 (your job runner)
+                        │ Post-trade pool │ M3
                         └────────┬────────┘
                                  ▼
                            Postgres  M8
@@ -45,479 +83,317 @@ If a module takes longer, that's fine. **Keep the order, not the dates.**
   Later: M11 engine rewritten in Rust · M12 backup exchange that takes over on crash
 ```
 
-## Target folder layout
+## Folder layout
 
 ```text
 exchange/
-├── CLAUDE.md, PLAN.md, README.md
-├── go.mod
-├── Makefile
+├── CLAUDE.md, PLAN.md, README.md, Makefile, go.mod
 ├── cmd/
-│   ├── exchange/      ← main program: wires all modules together
-│   └── trader/        ← fake trader that sends orders (load generator)
-├── orderbook/         ← M1
-├── engine/            ← M2
-├── posttrade/         ← M3
-├── gateway/           ← M4
-├── marketdata/        ← M5
-├── risk/              ← M6
-├── metrics/           ← M7
-├── store/             ← M8
-├── journal/           ← M9
+│   ├── exchange/      ← main program: wires everything together
+│   ├── trader/        ← fake trader / load generator (M2, M4)
+│   └── watcher/       ← market data viewer (M5)
+├── orderbook/  M1     ├── engine/   M2     ├── posttrade/ M3
+├── gateway/    M4     ├── marketdata/ M5   ├── risk/      M6
+├── metrics/    M7     ├── store/    M8     ├── journal/   M9
 ├── docs/
-│   ├── adr/           ← decision records (one file per big decision)
-│   └── notes/         ← your notes for each module
-└── rust/              ← M11
+│   ├── hld/           ← function cards, one file per module (Claude writes these)
+│   ├── adr/           ← decision records
+│   └── notes/         ← your own notes
+└── rust/       M11
 ```
 
-Don't create these folders up front. Create each one when its module starts.
+Create each folder when its module starts, not before.
+
+**Signatures for later modules are a first sketch.** Claude refines them into full cards
+when the module starts, based on how the earlier code actually turned out.
 
 ---
 
-## How every module runs
+## Module 1: Order book · 3 weeks · `docs/hld/M1.md`
 
-1. **Day 1: design first.** Write a half-page design in `docs/notes/MX.md`: what it does,
-   boxes and arrows, types, how it can fail. Ask Claude to review the design *before* coding.
-2. **Build in small runnable steps.** It should compile and the tests should pass at the end
-   of every session. Commit after each step.
-3. **Break it on purpose.** Slow it down, kill it, flood it. Watch what happens.
-4. **Last day: write it up.** Finish the module's written deliverable, then explain the module
-   out loud in 3 sentences as if to a non-engineer. Ask Claude to quiz you.
-5. **Take it to work.** Each module has a "slice tie-in": look for the same thing in real code.
+**Goal:** one stock's order book: orders go in, trades come out. Pure logic, no goroutines.
 
-**AI rule:** during the hour, Claude explains, hints and reviews. It doesn't write the
-module's code. (See `CLAUDE.md`.)
+**Go you'll learn:** structs, methods, pointer vs value receivers, `iota` enums, the `Stringer`
+interface, slices (`append`, `slices.Insert`, `slices.Delete`, `slices.BinarySearchFunc`), maps,
+errors (`errors.New`, `fmt.Errorf` with `%w`, `errors.Is`), the comma-ok idiom, table-driven tests,
+`t.Run`, test helpers, example tests, fuzz tests.
 
-### Words used in this plan
+**Systems you'll learn:** why money is never a float, why a counter beats a timestamp for
+ordering, keeping data sorted vs sorting on every read, invariants a test can check.
 
-- **ADR (Architecture Decision Record):** a short file explaining one decision: the problem,
-  the options, what you picked and why. Senior engineers write these so future readers
-  (including future you) know *why* the code looks the way it does.
-- **Runbook:** step-by-step instructions for what to do when something breaks.
-- **Postmortem:** a write-up after something broke: what happened, why, what changes now.
-  It focuses on causes, not on blaming people.
-- **p99 latency:** sort all request times; p99 is the one that 99% are faster than. It shows
-  how bad the worst cases are, which averages hide.
+| # | File | Function | Status |
+|---|---|---|---|
+| F0 | repo | Housekeeping: `.gitignore`, untrack the `exchange` binary | [ ] |
+| F1 | `orderbook/order.go` | Types: `OrderType`, `OrderStatus`, `Order`, `Trade`, `OrderBook` | [x] |
+| F2 | `orderbook/order.go` | `String()` for `OrderType` and `OrderStatus` | [ ] |
+| F3 | `orderbook/errors.go` | Sentinel errors: `ErrInvalidQty`, `ErrInvalidPrice`, … | [ ] |
+| F4 | `orderbook/book.go` | `NewOrderBook(entity string) *OrderBook` | [~] |
+| F5 | `orderbook/book.go` | `(b *OrderBook) validate(o *Order) error` | [ ] |
+| F6 | `orderbook/book.go` | `(b *OrderBook) rest(o *Order)`: insert keeping best-first | [ ] |
+| F7 | `orderbook/book.go` | `(b *OrderBook) BestBid()` / `BestAsk()` with comma-ok | [ ] |
+| F8 | `orderbook/book.go` | `(b *OrderBook) Submit(o *Order) ([]Trade, error)`: no matching yet | [~] |
+| F9 | `orderbook/book.go` | `(b *OrderBook) match(o *Order) []Trade`: full, partial, sweep | [ ] |
+| F10 | `orderbook/book.go` | `(b *OrderBook) Cancel(id int64) error` + `byID` map | [ ] |
+| F11 | `orderbook/order.go` + `book.go` | Market orders: `Kind` (`Limit`, `Market`) | [ ] |
+| F12 | `orderbook/book_test.go` | Table-driven tests for F4–F11 (grows with each card) | [ ] |
+| F13 | `orderbook/example_test.go` | `ExampleOrderBook_Submit`: runnable documentation | [ ] |
+| F14 | `orderbook/fuzz_test.go` | `FuzzSubmit`: random orders, book is never "crossed" | [ ] |
 
----
+**Deliverable:** `docs/notes/M1.md`: the matching rules in your own words + one worked example.
+**Done when:** all cards `[x]`, `go test -race ./...` green, you can trace a sweep by hand.
 
-## Module 1: Setup + Order book · 3 weeks
+### After M1: tooling, one sitting
 
-**Goal:** given orders one at a time, match them fairly and produce trades. Pure logic:
-no goroutines, no network.
-
-**Build**
-- [x] Setup: module path renamed, old scaffolding gone
-- [ ] `cmd/exchange/main.go` that prints "exchange starting" (runs already; commit it)
-- [ ] `Order`, `Trade`, `Side` types; `OrderBook` with `Submit(order) []Trade`
-- [ ] Price-time priority: best price first, then oldest first
-- [ ] Partial fills, and one order sweeping multiple price levels
-- [ ] `Cancel(orderID) bool`
-- [ ] Table-driven tests for every case (no match, full, partial, sweep, same-price ordering, cancel)
-- [ ] Market orders (buy/sell at whatever price is available)
-
-**Technical things to learn**
-- Go modules and packages: `go.mod`, module path, `package main`, exported vs unexported (capital letters)
-- Tooling: `go build`, `go run`, `go test`, `go vet`, `gofmt`
-- Structs, methods, pointer vs value receivers (and why it matters here)
-- Slices for real: `append`, capacity, why removing from the middle is costly
-- Maps; why money is `int64` paise, never float (`0.1 + 0.2 != 0.3`)
-- Table-driven tests, `t.Run` subtests, test helpers
-
-**Non-technical things to learn**
-- **Domain:** what an exchange does, bid/ask, spread, limit vs market orders, price-time priority
-- Turning fuzzy rules into exact test cases *before* writing code
-
-**Written deliverable:** `docs/notes/M1.md`, the matching rules in your own words, with one worked example.
-
-**Done when:** every listed test passes, and you can trace a sweep example by hand.
-
-**Slice tie-in:** find how money amounts are stored in slice's code. int? decimal? float?
-
-**Resources:** Zerodha Varsity (Module 1), *Trading and Exchanges* by Larry Harris (chapters on order books).
-
-### Deferred setup (do right after M1, in one sitting)
-
-By then there are real tests worth automating. Until then, run `go test ./...` by hand.
-
-- [ ] `Makefile` with `test`, `vet`, `run` targets
-- [ ] GitHub Actions running `go vet` and `go test -race ./...` on every push
-- [ ] `README.md`: one paragraph on what this is, and how to run it
-- [ ] Learn: what CI is and why every push should run tests; git habits (branches, small commits)
+| # | What | Learn | Status |
+|---|---|---|---|
+| T1 | `Makefile`: `test`, `vet`, `run`, `fmt` | make basics, `.PHONY` | [ ] |
+| T2 | `.github/workflows/ci.yml`: vet + `test -race` on every push | what CI is and why | [ ] |
+| T3 | `README.md`: what it is, how to run it | writing for a stranger | [ ] |
 
 ---
 
-## Module 2: Matching engine · 3 weeks
+## Module 2: Matching engine · 3 weeks · `docs/hld/M2.md`
 
-**Goal:** many stocks matched at the same time, each stock handled by exactly one goroutine.
+**Goal:** many stocks at once, one goroutine per stock, clean shutdown.
 
-**Build**
-- [ ] `Engine`: one goroutine per stock, owns one `OrderBook`, reads orders from a channel
-- [ ] `Router`: sends each incoming order to the right stock's channel
-- [ ] Every order gets a sequence number on arrival (proves arrival order)
-- [ ] Results (trades, acks, rejects) come out on an output channel
-- [ ] `cmd/trader`: fake trader firing N random orders across stocks
-- [ ] Clean shutdown with `context`: stop accepting, drain what's queued, exit
-- [ ] Print orders/sec at the end of a run
+**Go you'll learn:** goroutines, buffered vs unbuffered channels, directional channel types
+(`<-chan`, `chan<-`), `select`, closing channels, `context.Context`, `os/signal` +
+`signal.NotifyContext`, `errgroup`, type switches, the `flag` package, `math/rand/v2`, `time`.
 
-**Technical things to learn**
-- Goroutines, unbuffered vs buffered channels, `select`, closing channels (who closes what)
-- `context.Context`: cancellation, how shutdown spreads through the program
-- Why one goroutine per stock beats a worker pool + lock (fairness, no lock waiting, same result every time)
-- **Backpressure:** what happens when a channel is full, and whether the sender should wait or reject
-- `go test -race`, goroutine leaks and how to spot them
+**Systems you'll learn:** single-writer design (no locks needed), backpressure (wait vs reject when
+a queue is full), graceful shutdown (stop intake → drain → exit), goroutine leaks, the race detector.
 
-**Non-technical things to learn**
-- Write your **first ADR**: "One goroutine per stock instead of a worker pool"
-- Explaining a design choice by comparing the options, not just stating the answer
+| # | File | Function (sketch) | Status |
+|---|---|---|---|
+| F1 | `engine/messages.go` | `Command` (submit/cancel) and `Event` (ack, reject, trade) types | [ ] |
+| F2 | `engine/engine.go` | `New(entity string, in <-chan Command, out chan<- Event) *Engine` | [ ] |
+| F3 | `engine/engine.go` | `(e *Engine) Run(ctx context.Context) error`: the per-stock loop | [ ] |
+| F4 | `engine/router.go` | `NewRouter(entities []string, queueSize int) *Router` | [ ] |
+| F5 | `engine/router.go` | `(r *Router) Route(ctx, cmd Command) error`: `ErrUnknownEntity`, `ErrBusy` | [ ] |
+| F6 | `engine/router.go` | `(r *Router) Run(ctx) error`: start every engine with `errgroup` | [ ] |
+| F7 | `cmd/exchange/main.go` | Wire router + engines, shut down on Ctrl+C | [ ] |
+| F8 | `cmd/trader/main.go` | Flags (`-n`, `-stocks`), N random orders, print orders/sec | [ ] |
+| F9 | `engine/*_test.go` | Tests: ordering kept, no leaks, shutdown drains the queue | [ ] |
 
-**Written deliverable:** `docs/adr/0001-one-goroutine-per-stock.md`
-
-**Done when:** 100k random orders across 10 stocks run with `-race` clean, and Ctrl+C exits without losing queued orders.
-
-**Slice tie-in:** find a Kafka consumer at slice. Does message order matter there? How is it kept?
-
-**Resources:** Martin Fowler, "The LMAX Architecture"; *Concurrency in Go* (Cox-Buday), chapters 1–4.
+**Deliverable:** `docs/adr/0001-one-goroutine-per-stock.md`
+**Done when:** 100k orders across 10 stocks, `-race` clean; Ctrl+C loses no queued order.
 
 ---
 
-## Module 3: Post-trade processor · 3 weeks
+## Module 3: Post-trade worker pool · 3 weeks · `docs/hld/M3.md`
 
-**Goal:** after a trade, do the slow side work (confirmations, saving) with a worker pool,
-without slowing down matching and without doing anything twice. Your original job runner lives here.
+**Goal:** do slow work after a trade (confirmations) with a worker pool: timeouts, retries, no duplicates.
 
-**Build**
-- [ ] Worker pool: N workers read trade events from a channel
-- [ ] Each job has a timeout (`context.WithTimeout`)
-- [ ] Retries with exponential backoff + jitter (random extra wait)
-- [ ] Jobs that keep failing go to a "dead letter" list instead of retrying forever
-- [ ] **Idempotency:** running the same trade event twice has the same effect as once
-- [ ] Graceful shutdown: running jobs finish, queued ones are counted, nothing is silently dropped
-- [ ] Fake slow/failing "confirmation service" to test against
+**Go you'll learn:** your first real **interface** (`Handler`), `sync.WaitGroup`, `sync.Mutex`,
+`context.WithTimeout`, functional options (`WithWorkers(n)`), custom error types, `testing/synctest`
+(testing time-based code without real sleeps).
 
-**Technical things to learn**
-- `sync.WaitGroup`, `sync.Mutex`, `errgroup`
-- Timeouts: a timeout only works if the slow code checks `ctx.Done()`
-- Why retries need backoff and jitter (otherwise all retries hit at the same moment)
-- At-least-once vs exactly-once processing, and why idempotency is the practical answer
-- Dead letter queues
+**Systems you'll learn:** timeouts only work if the slow code checks `ctx.Done()`, exponential
+backoff + jitter, at-least-once delivery + idempotency, dead letter queues.
 
-**Non-technical things to learn**
-- **Failure-mode thinking:** for each step, ask "what if this is slow? down? runs twice?"
-- Write it down as a table: failure → what happens → what we do
+| # | File | Function (sketch) | Status |
+|---|---|---|---|
+| F1 | `posttrade/job.go` | `Job`, `Handler` interface, `Result` | [ ] |
+| F2 | `posttrade/pool.go` | `NewPool(h Handler, opts ...Option) *Pool` | [ ] |
+| F3 | `posttrade/pool.go` | `(p *Pool) Submit(ctx, job Job) error` | [ ] |
+| F4 | `posttrade/pool.go` | `(p *Pool) Shutdown(ctx) (Stats, error)`: finish running, count queued | [ ] |
+| F5 | `posttrade/retry.go` | `Backoff(attempt int, base, max time.Duration) time.Duration` with jitter | [ ] |
+| F6 | `posttrade/retry.go` | `Retry(ctx, policy Policy, fn func(context.Context) error) error` | [ ] |
+| F7 | `posttrade/dedupe.go` | `Seen.MarkIfNew(tradeID) bool`: idempotency, mutex-protected | [ ] |
+| F8 | `posttrade/deadletter.go` | `DeadLetters.Add` / `List` | [ ] |
+| F9 | `posttrade/fake.go` | Fake confirmation service: random failures + slowness | [ ] |
+| F10 | `posttrade/*_test.go` | 30% failure rate → every trade done or dead-lettered, none twice | [ ] |
 
-**Written deliverable:** failure-mode table in `docs/notes/M3.md`
-
-**Done when:** with the fake service failing 30% of the time, every trade ends up either done or in the dead letter list, with no duplicates.
-
-**Slice tie-in:** how does slice avoid charging a customer twice when a request is retried? (Idempotency keys. You may have seen these at Razorpay.)
-
-**Resources:** Go blog "Go Concurrency Patterns: Pipelines and cancellation"; AWS Architecture blog "Exponential Backoff and Jitter" (Marc Brooker); *100 Go Mistakes*, concurrency chapters.
+**Deliverable:** failure table in `docs/notes/M3.md` (failure → what happens → what we do).
 
 ---
 
-## Module 4: Order gateway (TCP) · 4 weeks
+## Module 4: Order gateway over TCP · 4 weeks · `docs/hld/M4.md`
 
-**Goal:** real trader programs connect over TCP and send orders using a protocol you design.
+**Goal:** real trader programs connect over TCP and send orders in your own protocol.
 
-**Build**
-- [ ] TCP server: one goroutine per connected trader
-- [ ] Your own message protocol: start text-based (one order per line), then a binary version
-- [ ] Message framing: knowing where one message ends and the next starts
-- [ ] Validate every order (positive qty, known stock, sane price); reject with a reason
-- [ ] Read/write deadlines; disconnect traders that go silent (heartbeats)
-- [ ] Handle a slow trader that doesn't read its responses (don't let it block the engine)
-- [ ] `cmd/trader` now connects over TCP
+**Go you'll learn:** `net.Listen`, `net.Conn`, `bufio.Reader`/`Scanner`, `io.Reader`/`io.Writer`,
+`io.ReadFull`, `encoding/binary`, deadlines, `net.Pipe` for tests, `strings`/`strconv` parsing.
 
-**Technical things to learn**
-- TCP basics: connections, the 3-way handshake, why TCP is a byte stream, not messages
-- `net.Listen`, `net.Conn`, `bufio`, `encoding/binary`, endianness
-- The different timeouts: connect, read, write, idle. What happens without each one
-- Partial reads and writes; connection resets; `TIME_WAIT`
-- Testing network code with `net.Pipe`
+**Systems you'll learn:** TCP is a byte stream, not messages (framing), partial reads, the 4 kinds
+of timeout (connect, read, write, idle), heartbeats, slow clients, connection resets.
 
-**Non-technical things to learn**
-- **Write a protocol spec** (`docs/protocol.md`) that someone could build a trader from without reading your code
-- Reading real specs: skim NASDAQ's OUCH spec to see how a real exchange documents this
+| # | File | Function (sketch) | Status |
+|---|---|---|---|
+| F1 | `gateway/text.go` | `ParseLine(line string) (engine.Command, error)` / `FormatEvent(ev) string` | [ ] |
+| F2 | `gateway/server.go` | `NewServer(addr string, r *engine.Router) *Server` | [ ] |
+| F3 | `gateway/server.go` | `(s *Server) Serve(ctx) error`: accept loop, stops on ctx | [ ] |
+| F4 | `gateway/session.go` | `(s *session) readLoop(ctx)` with read deadline + heartbeat | [ ] |
+| F5 | `gateway/session.go` | `(s *session) writeLoop(ctx)`: buffered outbox, drop slow clients | [ ] |
+| F6 | `gateway/binary.go` | `Encode(w io.Writer, m Msg) error` / `Decode(r io.Reader) (Msg, error)` | [ ] |
+| F7 | `cmd/trader/main.go` | Trader connects over TCP | [ ] |
+| F8 | `gateway/*_test.go` | Tests with `net.Pipe`: half messages, bad input, silent client | [ ] |
 
-**Written deliverable:** `docs/protocol.md`
-
-**Done when:** 50 trader programs connect at once and trade; killing one mid-message doesn't affect the others.
-
-**Slice tie-in:** pick one outgoing HTTP call in a slice service. What are its timeouts? What's the connection pool size?
-
-**Resources:** *Beej's Guide to Network Programming* (C, but best explanation of sockets); Cloudflare blog "The complete guide to Go net/http timeouts"; NASDAQ OUCH spec.
+**Deliverable:** `docs/protocol.md`: enough for someone to build a trader without your code.
+**Done when:** 50 traders at once; killing one mid-message doesn't affect the others.
 
 ---
 
-## Module 5: Market data feed · 3 weeks
+## Module 5: Market data feed · 3 weeks · `docs/hld/M5.md`
 
-**Goal:** anyone watching gets every trade and price change, live, in the correct order.
+**Goal:** everyone watching gets every trade and price change, live and in order.
 
-**Build**
-- [ ] Broadcast trades and order book changes to all subscribers
-- [ ] Sequence numbers on every message, so watchers can detect a missed message (a "gap")
-- [ ] Snapshot on join (full book) + live updates after
-- [ ] Slow watcher policy: drop them, never let them slow everyone else
-- [ ] `cmd/watcher`: prints a live top-of-book view
-- [ ] Stretch: UDP multicast version (what real exchanges use)
+**Go you'll learn:** fan-out with channels, `select` with `default` (non-blocking send),
+`sync.RWMutex`, `net.ListenMulticastUDP` / `net.UDPConn` (stretch).
 
-**Technical things to learn**
-- Fan-out (one sender, many receivers) with goroutines and channels
-- Slow consumers: block vs drop vs buffer, and the cost of each
-- Snapshot + incremental updates, gap detection and recovery
-- TCP vs UDP: when losing a packet is fine, and how you recover when it isn't
+**Systems you'll learn:** slow consumers (block vs drop vs buffer), snapshot + live updates,
+sequence numbers and gap detection, TCP vs UDP.
 
-**Non-technical things to learn**
-- **Domain:** what market data is, why it must be fair (everyone sees it at the same time), level 1 vs level 2 data
-- ADR: "What we do with slow watchers"
+| # | File | Function (sketch) | Status |
+|---|---|---|---|
+| F1 | `orderbook/book.go` | `(b *OrderBook) Depth(n int) (bids, asks []Level)` | [ ] |
+| F2 | `marketdata/hub.go` | `NewHub(bufSize int) *Hub` | [ ] |
+| F3 | `marketdata/hub.go` | `(h *Hub) Subscribe() (*Sub, Snapshot)` / `Unsubscribe` | [ ] |
+| F4 | `marketdata/hub.go` | `(h *Hub) Publish(u Update)`: never blocks, drops slow subs | [ ] |
+| F5 | `marketdata/client.go` | `(c *Client) Apply(u Update) error`: returns `ErrGap` | [ ] |
+| F6 | `cmd/watcher/main.go` | Live top-of-book in the terminal | [ ] |
+| F7 | `marketdata/udp.go` | Stretch: UDP multicast sender + receiver | [ ] |
 
-**Written deliverable:** `docs/adr/0002-slow-consumers.md`
-
-**Done when:** a deliberately slow watcher gets disconnected while 20 others keep up, and a watcher that misses messages detects the gap.
-
-**Resources:** NASDAQ ITCH spec (skim the message types); Zerodha Varsity on market depth.
+**Deliverable:** `docs/adr/0002-slow-consumers.md`
 
 ---
 
-## Module 6: Pre-trade risk and rate limiting · 3 weeks
+## Module 6: Risk checks and rate limiting · 3 weeks · `docs/hld/M6.md`
 
-**Goal:** stop bad or abusive orders at the gateway before they reach matching.
+**Goal:** block bad or abusive orders at the gateway, before matching.
 
-**Build**
-- [ ] Token bucket rate limiter per trader (built by you, then compared with `golang.org/x/time/rate`)
-- [ ] Price bands: reject orders too far from the last price (like NSE circuit limits)
-- [ ] Max order size and max open orders per trader
-- [ ] Kill switch: instantly block one trader, or halt one stock
-- [ ] Clear reject reasons sent back to the trader
+**Go you'll learn:** `sync/atomic` (`atomic.Bool`, `atomic.Int64`), injecting a clock (small interface),
+`testing/synctest`, benchmarks (`testing.B`), reading `golang.org/x/time/rate` source.
 
-**Technical things to learn**
-- Rate limiting algorithms: token bucket, leaky bucket, fixed vs sliding window
-- Doing these checks fast: no locks shared across traders where avoidable
-- Testing time-based code without `time.Sleep` (injecting a fake clock)
+**Systems you'll learn:** token bucket vs leaky bucket vs windows, per-user state without a global
+lock, kill switches, circuit limits.
 
-**Non-technical things to learn**
-- **Domain:** circuit limits, trading halts, fat-finger errors (and real incidents caused by them)
-- Read one real exchange incident write-up (e.g. Knight Capital 2012) and write a half-page summary
+| # | File | Function (sketch) | Status |
+|---|---|---|---|
+| F1 | `risk/bucket.go` | `NewTokenBucket(rate float64, burst int, now func() time.Time)` | [ ] |
+| F2 | `risk/bucket.go` | `(b *TokenBucket) Allow() bool` | [ ] |
+| F3 | `risk/checks.go` | `(c *Checker) Check(cmd engine.Command) error`: size, price band, open orders | [ ] |
+| F4 | `risk/killswitch.go` | `BlockTrader(id)`, `HaltEntity(e)`, `IsBlocked(...)` with atomics | [ ] |
+| F5 | `risk/*_test.go` | Fake clock tests; benchmark vs `x/time/rate` | [ ] |
 
-**Written deliverable:** `docs/notes/M6.md` with the incident summary + what in your design would have stopped it
-
-**Done when:** a trader flooding 10k orders/sec gets limited, while others are unaffected; a halted stock rejects all orders.
-
-**Slice tie-in:** where does slice rate-limit (API gateway? per user? per partner?) and what happens when the limit is hit?
-
-**Resources:** `x/time/rate` source code; Zerodha Varsity on circuit limits; SEC report on Knight Capital.
+**Deliverable:** `docs/notes/M6.md`: Knight Capital 2012 in half a page + what would've stopped it.
 
 ---
 
-## Module 7: Observability · 3 weeks
+## Module 7: Observability · 3 weeks · `docs/hld/M7.md`
 
-**Goal:** see what the exchange is doing while it runs, and find problems from the outside.
+**Goal:** see what the exchange is doing while it runs.
 
-**Build**
-- [ ] Structured logs with `log/slog` (with order IDs, stock, trader)
-- [ ] Prometheus metrics: orders/sec, trades/sec, rejects by reason, queue lengths, connected traders
-- [ ] Latency histogram: time from order received → result sent
-- [ ] Grafana dashboard (Prometheus + Grafana via Docker Compose)
-- [ ] Health check endpoint
+**Go you'll learn:** `log/slog` (structured logs, handlers, `With`), `net/http`, `http.ServeMux`
+route patterns, `net/http/httptest`, Prometheus `client_golang`, middleware as `func(http.Handler) http.Handler`.
 
-**Technical things to learn**
-- Logs vs metrics vs traces, and when each one helps
-- Counters, gauges, histograms; why averages lie and percentiles don't
-- Docker and Docker Compose basics
-- The "four golden signals": latency, traffic, errors, saturation (how full things are)
+**Systems you'll learn:** logs vs metrics vs traces, counters/gauges/histograms, percentiles,
+the four golden signals, Docker Compose.
 
-**Non-technical things to learn**
-- Write a **runbook**: "Latency is high, what do I check first?"
-- Deciding what to alert on (and what not to: alerts nobody acts on get ignored)
+| # | File | Function (sketch) | Status |
+|---|---|---|---|
+| F1 | `cmd/exchange/main.go` | `slog` setup: JSON in prod, text in dev | [ ] |
+| F2 | `metrics/metrics.go` | `New(reg prometheus.Registerer) *Metrics` | [ ] |
+| F3 | `metrics/metrics.go` | `ObserveOrder`, `ObserveLatency(start time.Time)`, queue gauges | [ ] |
+| F4 | `metrics/http.go` | `Handler() http.Handler`: `/metrics` + `/healthz` | [ ] |
+| F5 | `docker-compose.yml` | Prometheus + Grafana + a dashboard | [ ] |
 
-**Written deliverable:** `docs/runbook.md`
-
-**Done when:** you can run a load test, open Grafana, and point at the exact queue that's backing up.
-
-**Slice tie-in:** open slice's dashboards for your service. Which golden signals are there? Which are missing?
-
-**Resources:** Google SRE book, chapter "Monitoring Distributed Systems"; Prometheus docs on histograms.
+**Deliverable:** `docs/runbook.md`: "latency is high, what do I check first?"
 
 ---
 
-## Module 8: Trade storage in Postgres · 4 weeks
+## Module 8: Trade storage in Postgres · 4 weeks · `docs/hld/M8.md`
 
-**Goal:** every trade gets saved to Postgres reliably, even when the database is slow or down.
+**Goal:** every trade saved reliably, even when the database is slow or down.
 
-**Build**
-- [ ] Schema for orders and trades; migrations
-- [ ] Post-trade pool (M3) writes trades to Postgres
-- [ ] Tune the connection pool: max open, max idle, max lifetime, with reasons for each number
-- [ ] Query timeouts on every DB call
-- [ ] Batch inserts; measure the speedup vs one-at-a-time
-- [ ] Circuit breaker (built by you): when Postgres is failing, stop hammering it, buffer, retry later
-- [ ] Queries: a trader's trade history, daily volume per stock; make them fast with indexes
+**Go you'll learn:** `pgx/v5` + `pgxpool` (or `database/sql`), `//go:embed` for SQL migrations,
+context timeouts on every call, batch inserts, transactions, integration tests against a real DB.
 
-**Technical things to learn**
-- **Connection pooling, in depth:** what a connection costs, what happens when the pool is empty,
-  read `database/sql` source (`sql.go`) to see how Go's pool really works
-- Timeouts at each layer: pool wait, query, network
-- Circuit breaker states: closed → open → half-open, and why each exists
-- Transactions, isolation levels, MVCC (how Postgres lets readers and writers not block each other)
-- Indexes, `EXPLAIN ANALYZE`, why an index can be ignored
-- Postgres connection limits and why tools like PgBouncer exist
+**Systems you'll learn:** connection pools (and reading `database/sql`'s pool code), timeouts at each
+layer, circuit breakers, MVCC, indexes and `EXPLAIN ANALYZE`, sizing a pool with numbers.
 
-**Non-technical things to learn**
-- **Data modeling doc:** tables, why each column exists, which queries each index serves
-- Making a decision with numbers: "pool size 20 because I measured X", not "20 felt right"
+| # | File | Function (sketch) | Status |
+|---|---|---|---|
+| F1 | `store/migrations/*.sql` | `orders` and `trades` tables + indexes | [ ] |
+| F2 | `store/store.go` | `Open(ctx, dsn string, cfg PoolConfig) (*Store, error)` | [ ] |
+| F3 | `store/store.go` | `(s *Store) InsertTrades(ctx, []orderbook.Trade) error`: batch, dedupe by trade ID | [ ] |
+| F4 | `store/store.go` | `TradeHistory(ctx, userID, limit)`, `DailyVolume(ctx, day)` | [ ] |
+| F5 | `store/breaker.go` | `NewBreaker(...)`, `(b *Breaker) Do(ctx, fn) error`: closed/open/half-open | [ ] |
+| F6 | `posttrade` | Post-trade pool writes through the breaker | [ ] |
 
-**Written deliverable:** `docs/notes/M8.md` with the data model + a pool sizing write-up with measurements
-
-**Done when:** stopping Postgres mid-load loses no trades (they're saved once it's back), and the exchange keeps matching the whole time.
-
-**Slice tie-in:** check your service's DB pool settings. Can you explain each number? Look for a slow query and run `EXPLAIN ANALYZE` on it (on a non-production DB).
-
-**Resources:** *Use The Index, Luke* (free online); *Release It!* (Nygard), stability patterns chapter; Postgres docs on MVCC; `database/sql` source.
+**Deliverable:** `docs/notes/M8.md`: data model + pool sizing with measurements.
+**Done when:** stopping Postgres mid-load loses no trades and matching never stops.
 
 ---
 
-## Module 9: Journal and crash recovery · 5 weeks
+## Module 9: Journal and crash recovery · 5 weeks · `docs/hld/M9.md`
 
-**Goal:** kill the exchange with `kill -9` at any moment, restart it, and get back exactly the same order books.
+**Goal:** `kill -9` at any moment, restart, and get back exactly the same order books.
 
-**Build**
-- [ ] Journal: every order is written to an append-only file *before* the engine processes it
-- [ ] Binary record format with length + checksum (to detect half-written records)
-- [ ] `fsync` strategies: every write vs batched; measure the latency cost of each
-- [ ] Recovery: on start, replay the journal to rebuild every order book
-- [ ] Snapshots: save full book state periodically so replay doesn't start from zero
-- [ ] Journal file rotation and cleanup of old files after a snapshot
-- [ ] Crash test script: random `kill -9` in a loop, check books match every time
+**Go you'll learn:** `os.File`, `bufio.Writer`, `(*os.File).Sync`, `hash/crc32`, `io.EOF` vs
+`io.ErrUnexpectedEOF`, `encoding/binary`, `os/exec` (for the crash-test harness).
 
-**Technical things to learn**
-- Write-ahead logging (WAL): why databases write the log first
-- What `fsync` really does, the page cache, why "written" doesn't mean "on disk"
-- Torn writes, checksums (CRC32), detecting a corrupt tail
-- Why the engine must behave the same way every time for replay to work
-  (no `time.Now()` or random numbers inside matching)
-- Snapshots + log = how Postgres, Kafka and Redis all recover
+**Systems you'll learn:** write-ahead logging, what `fsync` really does, torn writes and checksums,
+determinism (no `time.Now()` inside matching), snapshots + log replay.
 
-**Non-technical things to learn**
-- Write a **disaster recovery runbook**: "The exchange crashed. Here's how to restart and verify it."
-- Write a **postmortem** for one bug you hit during this module, as if it happened in production
+| # | File | Function (sketch) | Status |
+|---|---|---|---|
+| F1 | `journal/record.go` | `encode(r Record) []byte` / `decode([]byte) (Record, error)`: length + CRC | [ ] |
+| F2 | `journal/writer.go` | `Open(dir string, policy SyncPolicy) (*Writer, error)` | [ ] |
+| F3 | `journal/writer.go` | `(w *Writer) Append(r Record) error`, `Sync() error`, `Rotate() error` | [ ] |
+| F4 | `journal/replay.go` | `Replay(dir string, fn func(Record) error) error`: stops cleanly at a torn tail | [ ] |
+| F5 | `orderbook/snapshot.go` | `(b *OrderBook) Snapshot() State` / `Restore(State) *OrderBook` | [ ] |
+| F6 | `cmd/crashtest/main.go` | Start, `kill -9` at random, restart, compare books; 100 rounds | [ ] |
 
-**Written deliverable:** `docs/recovery.md` + `docs/postmortems/001.md`
-
-**Done when:** 100 random `kill -9` runs, and recovered state matches every time.
-
-**Resources:** *Designing Data-Intensive Applications* (Kleppmann), chapter 3; *Database Internals* (Petrov); Dan Luu, "Files are hard"; CMU 15-445 lectures on logging and recovery (free on YouTube).
+**Deliverable:** `docs/recovery.md` + `docs/postmortems/001.md` (a real bug you hit).
 
 ---
 
-## Module 10: Performance · 4 weeks
+## Module 10: Performance · 4 weeks · `docs/hld/M10.md`
 
-**Goal:** make the exchange measurably faster, and prove every improvement with numbers.
+**Goal:** make it measurably faster, and prove every change with numbers.
 
-**Build**
-- [ ] Benchmarks (`testing.B`) for the order book and engine
-- [ ] Baseline numbers: orders/sec, p50/p99 latency, allocations per order
-- [ ] CPU and memory profiles with `pprof`; find the top 3 hot spots
-- [ ] Replace the sorted slices in the order book with a better structure (justify it with numbers)
-- [ ] Cut allocations in the hot path (reuse objects, `sync.Pool` where it helps)
-- [ ] Look at GC pauses and their effect on p99
-- [ ] Before/after table for every change
+**Go you'll learn:** `testing.B`, `b.ReportAllocs`, `benchstat`, `pprof` (CPU, heap),
+`go tool trace`, `-gcflags=-m` (escape analysis), `sync.Pool`, `GOGC`/`GOMEMLIMIT`.
 
-**Technical things to learn**
-- Benchmarking properly: `benchstat`, warmup, avoiding fooling yourself
-- `pprof` (CPU, heap, allocs), `go tool trace`
-- Escape analysis: when Go puts things on the heap and why it costs
-- How the garbage collector works and why it causes latency spikes
-- CPU caches: why a slice can beat a "faster" tree in practice
-- The Go scheduler (G, M, P) at a basic level
+**Systems you'll learn:** benchmarking without fooling yourself, heap vs stack, GC pauses and p99,
+CPU caches, the Go scheduler at a basic level.
 
-**Non-technical things to learn**
-- **Performance write-up:** what you measured, what you changed, the numbers. One page.
-- Knowing when to stop: "fast enough" is a decision, not a feeling
+| # | File | Function (sketch) | Status |
+|---|---|---|---|
+| F1 | `orderbook/bench_test.go` | `BenchmarkSubmit`, `BenchmarkMatchSweep`, `BenchmarkCancel` | [ ] |
+| F2 | `engine/bench_test.go` | End-to-end orders/sec + p50/p99 | [ ] |
+| F3 | `orderbook` | Replace sorted slices with a better structure, justified by numbers | [ ] |
+| F4 | hot path | Cut allocations per order; before/after table | [ ] |
 
-**Written deliverable:** `docs/notes/M10-performance.md`
-
-**Done when:** at least 3x faster than baseline on orders/sec or p99, backed by benchmark output.
-
-**Resources:** Go blog "Profiling Go Programs"; Dave Cheney, "High Performance Go Workshop"; *100 Go Mistakes*, performance chapters.
+**Deliverable:** `docs/notes/M10-performance.md` (what, why, before/after numbers).
+**Done when:** ≥3x faster on orders/sec or p99, backed by benchstat output.
 
 ---
 
-## Module 11: Matching engine in Rust · 8 weeks
+## Module 11: Matching engine in Rust · 8 weeks · `docs/hld/M11.md`
 
-**Goal:** rebuild the order book and engine in Rust, plug it into the same system, and compare it with Go.
+Weeks 1–3: Rust Book ch. 1–10 + Rustlings. Then the order book in Rust (same test cases as M1),
+one thread per stock, a `tokio` gateway speaking the M4 protocol, and the M10 benchmarks for Go vs Rust.
 
-**Build**
-- [ ] Weeks 1–3: learn Rust basics with small exercises (Rust Book chapters 1–10, Rustlings)
-- [ ] Order book in Rust, passing the same test cases as M1
-- [ ] Engine with one thread per stock (`std::thread` + channels), then a `tokio` version of the gateway
-- [ ] Speaks the same protocol as M4, so the Go traders work with it unchanged
-- [ ] Same benchmarks as M10; compare Go vs Rust (throughput, p99, memory)
-
-**Technical things to learn**
-- Ownership, borrowing, lifetimes: what the compiler is protecting you from
-- `Result`, `Option`, error handling with `?`
-- Traits, generics, enums with data (great for order types)
-- Threads, channels, `Arc`/`Mutex`; why Rust can catch data races at compile time
-- Async Rust with `tokio`
-- `cargo`, `cargo test`, `cargo bench` (criterion)
-
-**Non-technical things to learn**
-- Learning a new language fast: build the same thing you already know
-- ADR: "When would we choose Rust over Go for this system?"
-
-**Written deliverable:** `docs/adr/000X-go-vs-rust.md` with the benchmark comparison
-
-**Done when:** the Rust engine passes all M1 tests and trades with the Go traders over TCP.
-
-**Resources:** *The Rust Programming Language* (the Rust Book); Rustlings; Tokio tutorial; *Rust Atomics and Locks* (Mara Bos); later *Rust for Rustaceans* (Gjengset).
+**Deliverable:** `docs/adr/000X-go-vs-rust.md` with the benchmark comparison.
 
 ---
 
-## Module 12: Replication and failover · 6 weeks
+## Module 12: Replication and failover · 6 weeks · `docs/hld/M12.md`
 
-**Goal:** run a backup exchange that copies everything and takes over if the main one dies.
+Weeks 1–4: MIT 6.5840 labs (MapReduce + Raft) as-is. Then: primary streams its journal (M9) to a
+backup over TCP, the backup replays it live, takes over when the primary dies, and split brain is prevented.
 
-**Build**
-- [ ] Weeks 1–4: MIT 6.5840 labs on their own, MapReduce + Raft (leader election, log replication).
-      The labs' test suite is the point, so do them as-is
-- [ ] Primary sends its journal (M9) to a backup over TCP; backup replays it live
-- [ ] Failover: primary dies → backup takes over → traders reconnect
-- [ ] Make sure two machines never both act as the primary ("split brain")
-- [ ] Stretch: use your Raft from the labs to choose the primary
-
-**Technical things to learn**
-- Replication: primary/backup, synchronous vs asynchronous, what you can lose in each
-- Consensus and Raft: leader election, terms, log matching
-- Split brain, and why "just ping it" isn't enough to know a machine is dead
-- Network partitions and the CAP trade-off, in plain terms
-
-**Non-technical things to learn**
-- Explaining a hard topic simply: write "Raft in 1 page" for a junior engineer
-
-**Written deliverable:** `docs/notes/M12-raft.md` + `docs/adr/000X-failover.md`
-
-**Done when:** killing the primary under load → backup takes over, no trade lost, no trade done twice.
-
-**Resources:** MIT 6.5840 course site and labs; Raft paper ("In Search of an Understandable Consensus Algorithm"); thesecretlivesofdata.com/raft.
+**Deliverable:** `docs/notes/M12-raft.md` + `docs/adr/000X-failover.md`.
+**Done when:** killing the primary under load loses no trade and does no trade twice.
 
 ---
 
 ## Module 13: Capstone · 2 weeks
 
-**Goal:** turn a year of work into something people can see.
-
-**Build**
-- [ ] `docker compose up` starts the whole system: exchange, traders, watcher, Postgres, Grafana
-- [ ] Polished README with the architecture diagram and how to run it
-- [ ] A 3-minute demo video: load test, Grafana, kill the primary, failover
-
-**Non-technical things to learn**
-- **Blog post:** "I built a stock exchange to learn systems programming": design, numbers, mistakes
-- Turning the project into resume bullets with real numbers
-- Presenting it: practise explaining it in 2 minutes and in 20 minutes
-
-**Done when:** a stranger can clone the repo and see it working in 5 minutes.
+`docker compose up` runs everything; polished README with the diagram; a 3-minute demo video;
+a blog post with design, numbers and mistakes.
 
 ---
 
@@ -525,9 +401,9 @@ without slowing down matching and without doing anything twice. Your original jo
 
 | Module | Status | Started | Finished |
 |---|---|---|---|
-| M1 Setup + Order book | ⬜ | | |
+| M1 Order book | 🟨 | 2026-11-21 | |
 | M2 Matching engine | ⬜ | | |
-| M3 Post-trade processor | ⬜ | | |
+| M3 Post-trade pool | ⬜ | | |
 | M4 Order gateway | ⬜ | | |
 | M5 Market data feed | ⬜ | | |
 | M6 Risk + rate limiting | ⬜ | | |
@@ -540,3 +416,13 @@ without slowing down matching and without doing anything twice. Your original jo
 | M13 Capstone | ⬜ | | |
 
 ⬜ not started · 🟨 in progress · ✅ done
+
+## Resources (pick up when the module starts)
+
+- **Go:** go.dev/doc/code, Effective Go, *100 Go Mistakes* (Harsanyi), *Concurrency in Go* (Cox-Buday),
+  Go blog posts on pipelines, profiling, errors.
+- **M1:** Zerodha Varsity Module 1. **M2:** Fowler, "The LMAX Architecture".
+- **M3:** Marc Brooker, "Exponential Backoff and Jitter". **M4:** Beej's Guide, Cloudflare "Go net/http timeouts", NASDAQ OUCH.
+- **M5:** NASDAQ ITCH. **M7:** Google SRE book, monitoring chapter. **M8:** *Use The Index, Luke*, *Release It!*.
+- **M9:** DDIA ch. 3, Dan Luu "Files are hard". **M10:** Dave Cheney's High Performance Go.
+- **M11:** Rust Book, Rustlings, *Rust Atomics and Locks*. **M12:** Raft paper, MIT 6.5840.

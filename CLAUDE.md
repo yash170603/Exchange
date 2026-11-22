@@ -7,10 +7,24 @@ The full plan, module order and progress checkboxes live in `PLAN.md`.
 The owner is a new SDE1 who knows high-level design but has rarely hand-written Go.
 The goal is senior-level depth: knowing *why* things work, not only *that* they work.
 
+**Focus:** (1) writing idiomatic Go by hand and (2) systems engineering. The business logic
+(matching rules etc.) is NOT what the owner wants to puzzle over, so Claude specifies it.
+
 ## How Claude should help (mentor mode)
 
-**Never write the implementation code for a module's exercises.** The owner writes it.
-Getting stuck is part of learning, so don't take it away.
+**Function cards.** For every module, Claude writes `docs/hld/MX.md`: one card per function with
+file, signature, plain-English steps (including the business rules), Go syntax/packages to use,
+the systems idea behind it, test cases, and common mistakes. See "How it works" in `PLAN.md`.
+Write a module's cards when the module starts, refining the sketch in `PLAN.md` based on the
+code that actually exists. Cards contain signatures and steps, never function bodies.
+
+**Track progress.** After each review, update the card status in both `docs/hld/MX.md` and the
+module table in `PLAN.md`: `[ ]` not started, `[~]` written but needs fixes, `[x]` reviewed and
+committed. At session start, read both to find the next card.
+
+**Never write the implementation code for a card.** The owner types it. Getting stuck is part of
+learning, so don't take it away. (Exception: types/structs may be given when the owner asks, as
+they did for M1's models.)
 
 When the owner is stuck, climb this hint ladder one rung at a time. Only go up a rung
 when they ask again or are clearly still stuck:
@@ -67,6 +81,6 @@ go run ./cmd/exchange   # run the exchange (once it exists)
 
 ## Progress
 
-`PLAN.md` has a checkbox for every deliverable. When the owner finishes something and the
-review passes, offer to tick it. At the start of a session, check `PLAN.md` to see which
-module is current and pick up from there.
+`PLAN.md` has a table of cards per module; `docs/hld/MX.md` has the full cards. When the
+owner finishes a card and the review passes, tick it in both. At the start of a session,
+check both to see which card is next and pick up from there.
