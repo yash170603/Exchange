@@ -101,39 +101,14 @@ module's code. (See `CLAUDE.md`.)
 
 ---
 
-## Module 0: Project setup · 1 week
-
-**Goal:** a clean repo you can build, test and run with one command.
-
-**Build**
-- [ ] Rename folder + module path, delete the old scaffolding (`types/`, `channels/`, `workers/`, `JobProcessor/`). Keep your `Job`/`Result` ideas for M3
-- [ ] `cmd/exchange/main.go` that prints "exchange starting"
-- [ ] `Makefile` with `test`, `vet`, `run` targets
-- [ ] GitHub repo + GitHub Actions running `go vet` and `go test -race ./...` on every push
-- [ ] `README.md`: one paragraph on what this is, and how to run it
-
-**Technical things to learn**
-- Go modules: `go.mod`, module path, how imports work, `go mod tidy`
-- Packages: what `package main` means, exported vs unexported (capital letters)
-- Tooling: `go build`, `go run`, `go test`, `go vet`, `gofmt`
-- What CI is and why every push should run tests
-
-**Non-technical things to learn**
-- Git habits: small commits, messages that say *why*, branches even when working alone
-- Writing a README someone else can follow
-
-**Done when:** a fresh clone runs `make test` green, and CI shows a green tick.
-
-**Resources:** go.dev/doc/code ("How to Write Go Code"), Effective Go.
-
----
-
-## Module 1: Order book · 3 weeks
+## Module 1: Setup + Order book · 3 weeks
 
 **Goal:** given orders one at a time, match them fairly and produce trades. Pure logic:
 no goroutines, no network.
 
 **Build**
+- [x] Setup: module path renamed, old scaffolding gone
+- [ ] `cmd/exchange/main.go` that prints "exchange starting" (runs already; commit it)
 - [ ] `Order`, `Trade`, `Side` types; `OrderBook` with `Submit(order) []Trade`
 - [ ] Price-time priority: best price first, then oldest first
 - [ ] Partial fills, and one order sweeping multiple price levels
@@ -142,6 +117,8 @@ no goroutines, no network.
 - [ ] Market orders (buy/sell at whatever price is available)
 
 **Technical things to learn**
+- Go modules and packages: `go.mod`, module path, `package main`, exported vs unexported (capital letters)
+- Tooling: `go build`, `go run`, `go test`, `go vet`, `gofmt`
 - Structs, methods, pointer vs value receivers (and why it matters here)
 - Slices for real: `append`, capacity, why removing from the middle is costly
 - Maps; why money is `int64` paise, never float (`0.1 + 0.2 != 0.3`)
@@ -158,6 +135,15 @@ no goroutines, no network.
 **Slice tie-in:** find how money amounts are stored in slice's code. int? decimal? float?
 
 **Resources:** Zerodha Varsity (Module 1), *Trading and Exchanges* by Larry Harris (chapters on order books).
+
+### Deferred setup (do right after M1, in one sitting)
+
+By then there are real tests worth automating. Until then, run `go test ./...` by hand.
+
+- [ ] `Makefile` with `test`, `vet`, `run` targets
+- [ ] GitHub Actions running `go vet` and `go test -race ./...` on every push
+- [ ] `README.md`: one paragraph on what this is, and how to run it
+- [ ] Learn: what CI is and why every push should run tests; git habits (branches, small commits)
 
 ---
 
@@ -539,8 +525,7 @@ without slowing down matching and without doing anything twice. Your original jo
 
 | Module | Status | Started | Finished |
 |---|---|---|---|
-| M0 Setup | ⬜ | | |
-| M1 Order book | ⬜ | | |
+| M1 Setup + Order book | ⬜ | | |
 | M2 Matching engine | ⬜ | | |
 | M3 Post-trade processor | ⬜ | | |
 | M4 Order gateway | ⬜ | | |
